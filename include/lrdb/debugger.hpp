@@ -1,6 +1,5 @@
 #pragma once
 
-
 #if __cplusplus >= 201103L || (defined(_MSC_VER) && _MSC_VER >= 1800)
 
 #include <cstdio>
@@ -17,7 +16,6 @@ extern "C" {
 #include <lualib.h>
 }
 
-
 namespace lrdb {
 namespace json {
 using namespace ::picojson;
@@ -32,6 +30,10 @@ inline size_t lua_rawlen(lua_State* L, int index) {
 }
 inline void lua_pushglobaltable(lua_State* L) {
   lua_pushvalue(L, LUA_GLOBALSINDEX);
+}
+inline void lua_rawgetp(lua_State* L, int index, void* p) {
+  lua_pushlightuserdata(L, p);
+  lua_rawget(L, LUA_REGISTRYINDEX);
 }
 #endif
 namespace utility {
@@ -63,7 +65,6 @@ inline json::value to_json(lua_State* L, int index, int max_recursive = 1) {
     case LUA_TTABLE: {
       if (max_recursive <= 0) {
         char buffer[128] = {};
-        lua_pushvalue(L, index);  // backup
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4996)
@@ -72,9 +73,15 @@ inline json::value to_json(lua_State* L, int index, int max_recursive = 1) {
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-        lua_pop(L, 1);  // pop value
         json::object obj;
-        obj[lua_typename(L, type)] = json::value(buffer);
+
+        int tt = luaL_getmetafield(L, index, "__name");
+        const char* type =
+            (tt == LUA_TSTRING) ? lua_tostring(L, -1) : luaL_typename(L, index);
+        obj[type] = json::value(buffer);
+        if (tt != LUA_TNIL) {
+          lua_pop(L, 1); /* remove '__name' */
+        }
         return json::value(obj);
       }
       int array_size = lua_rawlen(L, index);
@@ -104,46 +111,35 @@ inline json::value to_json(lua_State* L, int index, int max_recursive = 1) {
       }
     }
     case LUA_TUSERDATA: {
-      const char* str = lua_tostring(L, index);
-      if (str) {
-        return json::value(str);
+      if (luaL_callmeta(L, index, "__tostring")) {
+        json::value v = to_json(L, -1, max_recursive);  // return value to json
+        lua_pop(L, 1);  // pop return value and metatable
+        return v;
       }
-      if (lua_getmetatable(L, index)) {
-        // in Lua code
-        // local meta = getmetatable(udata);
-        // if(meta.__totable)
-        //   local t = meta.__totable(udata)
-        //   if(t) return json.stringify(t) end
-        // end
-        //
-        lua_getfield(L, -1, "__totable");
-        int type = lua_type(L, -1);
-        if (type == LUA_TFUNCTION) {
-          lua_pushvalue(L, index);
-          if (lua_pcall(L, 1, 1, 0) == 0)  // invoke __totable with userdata
-          {
-            json::value v =
-                to_json(L, -1, max_recursive);  // return value to json
-            lua_pop(L, 1);  // pop return value and metatable
-            return v;
-          }
-          lua_pop(L, 1);  // pop error message
-        }
-        lua_pop(L, 2);  // pop metatable and getfield data
+      if (luaL_callmeta(L, index, "__totable")) {
+        json::value v = to_json(L, -1, max_recursive);  // return value to json
+        lua_pop(L, 1);  // pop return value and metatable
+        return v;
       }
     }
     case LUA_TLIGHTUSERDATA:
     case LUA_TTHREAD:
     case LUA_TFUNCTION: {
+      int tt = luaL_getmetafield(L, index, "__name");
+      const char* type =
+          (tt == LUA_TSTRING) ? lua_tostring(L, -1) : luaL_typename(L, index);
       char buffer[128] = {};
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4996)
 #endif
-      sprintf(buffer, "%s: %p", lua_typename(L, type), lua_topointer(L, index));
+      sprintf(buffer, "%s: %p", type, lua_topointer(L, index));
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
+      if (tt != LUA_TNIL) {
+        lua_pop(L, 1); /* remove '__name' */
+      }
       return json::value(buffer);
     }
   }
@@ -207,11 +203,13 @@ class debug_info {
     got_debug_ = other.got_debug_;
     return *this;
   }
-  void assign(lua_State* L, lua_Debug* debug, const char* got_type = "") {
+  void assign(lua_State* L, lua_Debug* debug, const char* got_type = 0) {
     state_ = L;
     debug_ = debug;
     got_debug_.clear();
-    got_debug_.append(got_type);
+    if (got_type) {
+      got_debug_.append(got_type);
+    }
   }
   bool is_available_info(const char* type) const {
     return got_debug_.find(type) != std::string::npos;
@@ -586,8 +584,8 @@ class debugger {
   typedef std::function<void(debugger& debugger)> pause_handler_type;
   typedef std::function<void(debugger& debugger)> tick_handler_type;
 
-  debugger() : state_(0), pause_(false), step_type_(STEP_NONE) {}
-  debugger(lua_State* L) : state_(0), pause_(false), step_type_(STEP_NONE) {
+  debugger() : state_(0), pause_(true), step_type_(STEP_ENTRY) {}
+  debugger(lua_State* L) : state_(0), pause_(true), step_type_(STEP_ENTRY) {
     reset(L);
   }
   ~debugger() { reset(); }
@@ -671,7 +669,7 @@ class debugger {
     }
   }
   /// @brief pause
-  void pause() { pause_ = true; }
+  void pause() { step_type_ = STEP_PAUSE; }
   /// @brief unpause(continue)
   void unpause() {
     pause_ = false;
@@ -693,7 +691,12 @@ class debugger {
       return "step_in";
     } else if (step_type_ == STEP_OUT) {
       return "step_out";
+    } else if (step_type_ == STEP_PAUSE) {
+      return "pause";
+    } else if (step_type_ == STEP_ENTRY) {
+      return "entry";
     }
+
     return "exception";
   }
 
@@ -736,9 +739,9 @@ class debugger {
   /// @brief get global table
   /// @param object_depth depth of extract for return value
   /// @return global table value
-  json::value get_global_table(int object_depth = 0) {
+  json::value get_global_table(int object_depth = 1) {
     lua_pushglobaltable(state_);
-    json::value v = utility::to_json(state_, -1, 1 + object_depth);
+    json::value v = utility::to_json(state_, -1, object_depth);
     lua_pop(state_, 1);  // pop global table
     return v;
   }
@@ -764,6 +767,9 @@ class debugger {
   debugger& operator=(const debugger&);  //=delete;
 
   breakpoint_info* search_breakpoints(debug_info& debuginfo) {
+    if (line_breakpoints_.empty()) {
+      return 0;
+    }
     int currentline = debuginfo.currentline();
     for (line_breakpoint_type::iterator it = line_breakpoints_.begin();
          it != line_breakpoints_.end(); ++it) {
@@ -846,12 +852,16 @@ class debugger {
         break;
       case STEP_IN:
         pause_ = true;
-
         break;
       case STEP_OUT:
         if (step_callstack_size_ > callstack.size()) {
           pause_ = true;
         }
+        break;
+      case STEP_PAUSE:
+        pause_ = true;
+        break;
+      case STEP_ENTRY:
       case STEP_NONE:
         break;
     }
@@ -859,7 +869,6 @@ class debugger {
   void hook(lua_State* L, lua_Debug* ar) {
     current_debug_info_.assign(L, ar);
     current_breakpoint_ = 0;
-    pause_ = false;
     tick();
 
     if (!pause_ && ar->event == LUA_HOOKLINE) {
@@ -876,6 +885,9 @@ class debugger {
     if (pause_ && pause_handler_) {
       step_callstack_size_ = 0;
       pause_handler_(*this);
+      if (step_type_ == STEP_NONE) {
+        pause_ = false;
+      }
     }
   }
   static void* this_data_key() {
@@ -883,8 +895,7 @@ class debugger {
     return &key_data;
   }
   static void hook_function(lua_State* L, lua_Debug* ar) {
-    lua_pushlightuserdata(L, this_data_key());
-    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_rawgetp(L, LUA_REGISTRYINDEX, this_data_key());
 
     debugger* self = static_cast<debugger*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
@@ -896,6 +907,8 @@ class debugger {
     STEP_OVER,
     STEP_IN,
     STEP_OUT,
+    STEP_PAUSE,
+    STEP_ENTRY,
   };
 
   lua_State* state_;

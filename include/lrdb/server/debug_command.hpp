@@ -1,34 +1,36 @@
 #pragma once
 
-#include "debugger.hpp"
-#include "message.hpp"
+#include "lrdb/debugger.hpp"
+#include "lrdb/message.hpp"
 
 namespace lrdb {
 
 namespace command {
-inline json::value exec_step(debugger& debugger, const json::value&) {
+inline json::value exec_step(debugger& debugger, const json::value&, bool&) {
   debugger.step();
   return json::value();
 }
-inline json::value exec_step_in(debugger& debugger, const json::value&) {
+inline json::value exec_step_in(debugger& debugger, const json::value&, bool&) {
   debugger.step_in();
   return json::value();
 }
 
-inline json::value exec_step_out(debugger& debugger, const json::value&) {
+inline json::value exec_step_out(debugger& debugger, const json::value&,
+                                 bool&) {
   debugger.step_out();
   return json::value();
 }
-inline json::value exec_continue(debugger& debugger, const json::value&) {
+inline json::value exec_continue(debugger& debugger, const json::value&,
+                                 bool&) {
   debugger.unpause();
   return json::value();
 }
-inline json::value exec_pause(debugger& debugger, const json::value&) {
+inline json::value exec_pause(debugger& debugger, const json::value&, bool&) {
   debugger.pause();
   return json::value();
 }
 inline json::value exec_add_breakpoint(debugger& debugger,
-                                       const json::value& param) {
+                                       const json::value& param, bool& error) {
   bool has_source = param.get("file").is<std::string>();
   bool has_condition = param.get("condition").is<std::string>();
   bool has_hit_condition = param.get("hit_condition").is<std::string>();
@@ -51,10 +53,11 @@ inline json::value exec_add_breakpoint(debugger& debugger,
     debugger.add_breakpoint(source, line, condition, hit_condition);
     return json::value(true);
   }
+  error = true;
   return json::value();
 }
 inline json::value exec_clear_breakpoints(debugger& debugger,
-                                          const json::value& param) {
+                                          const json::value& param, bool&) {
   bool has_source = param.get("file").is<std::string>();
   bool has_line = param.get("line").is<double>();
   if (!has_source) {
@@ -71,8 +74,8 @@ inline json::value exec_clear_breakpoints(debugger& debugger,
   }
   return json::value(true);
 }
-inline json::value exec_get_breakpoints(debugger& debugger,
-                                        const json::value&) {
+inline json::value exec_get_breakpoints(debugger& debugger, const json::value&,
+                                        bool&) {
   const debugger::line_breakpoint_type& breakpoints =
       debugger.line_breakpoints();
 
@@ -93,7 +96,8 @@ inline json::value exec_get_breakpoints(debugger& debugger,
 
   return json::value(res);
 }
-inline json::value exec_get_stacktrace(debugger& debugger, const json::value&) {
+inline json::value exec_get_stacktrace(debugger& debugger, const json::value&,
+                                       bool&) {
   auto callstack = debugger.get_call_stack();
   json::array res;
   for (auto& s : callstack) {
@@ -123,14 +127,15 @@ inline json::value exec_get_stacktrace(debugger& debugger, const json::value&) {
   return json::value(res);
 }
 inline json::value exec_get_local_variable(debugger& debugger,
-                                           const json::value& param) {
+                                           const json::value& param,
+                                           bool& error) {
   if (!param.is<json::object>()) {
     return json::value();
   }
   bool has_stackno = param.get("stack_no").is<double>();
   int depth = param.get("depth").is<double>()
                   ? static_cast<int>(param.get("depth").get<double>())
-                  : 0;
+                  : 1;
   if (has_stackno) {
     int stack_no = static_cast<int>(param.get("stack_no").get<double>());
     auto callstack = debugger.get_call_stack();
@@ -143,17 +148,18 @@ inline json::value exec_get_local_variable(debugger& debugger,
       return json::value(obj);
     }
   }
-  return json::value();
+  error = true;
+  return json::value("invalid arguments");
 }
 inline json::value exec_get_upvalues(debugger& debugger,
-                                     const json::value& param) {
+                                     const json::value& param, bool& error) {
   if (!param.is<json::object>()) {
     return json::value();
   }
   bool has_stackno = param.get("stack_no").is<double>();
   int depth = param.get("depth").is<double>()
                   ? static_cast<int>(param.get("depth").get<double>())
-                  : 0;
+                  : 1;
   if (has_stackno) {
     int stack_no = static_cast<int>(
         param.get<json::object>().at("stack_no").get<double>());
@@ -167,9 +173,11 @@ inline json::value exec_get_upvalues(debugger& debugger,
       return json::value(obj);
     }
   }
-  return json::value();
+  error = true;
+  return json::value("invalid arguments");
 }
-inline json::value exec_eval(debugger& debugger, const json::value& param) {
+inline json::value exec_eval(debugger& debugger, const json::value& param,
+                             bool& error) {
   bool has_chunk = param.get("chunk").is<std::string>();
   bool has_stackno = param.get("stack_no").is<double>();
 
@@ -192,13 +200,18 @@ inline json::value exec_eval(debugger& debugger, const json::value& param) {
     auto callstack = debugger.get_call_stack();
     if (int(callstack.size()) > stack_no) {
       return json::value(callstack[stack_no].eval(
-          chunk.c_str(), use_global, use_upvalue, use_local, depth));
+          chunk.c_str(), use_global, use_upvalue, use_local, depth + 1));
     }
   }
-  return json::value();
+  error = true;
+  return json::value("invalid arguments");
 }
-inline json::value exec_get_global(debugger& debugger, const json::value&) {
-  return debugger.get_global_table();
+inline json::value exec_get_global(debugger& debugger, const json::value& param,
+                                   bool&) {
+  int depth = param.get("depth").is<double>()
+                  ? static_cast<int>(param.get("depth").get<double>())
+                  : 1;
+  return debugger.get_global_table(depth + 1);  //+ 1 is global table self
 }
 }
 }
