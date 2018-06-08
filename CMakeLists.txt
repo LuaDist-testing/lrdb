@@ -6,11 +6,10 @@ include(cmake/ReduceDependencies.cmake)
 
 
 if(EMSCRIPTEN)
-  set(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS}  --memory-init-file 0 -s TOTAL_MEMORY=8777216")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --memory-init-file 0 -s TOTAL_MEMORY=8777216 -s EXPORTED_FUNCTIONS=\"['_main', '_lrdb_server_socket_on_connect', '_lrdb_server_socket_on_close', '_lrdb_server_socket_on_error', '_lrdb_server_socket_on_data']\"")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s EXPORTED_FUNCTIONS=\"['_main', '_lrdb_server_socket_on_connect', '_lrdb_server_socket_on_close', '_lrdb_server_socket_on_error', '_lrdb_server_socket_on_data']\"")
  
-  set(EMTERPRETER_OPT " -s EMTERPRETIFY=1 -s EMTERPRETIFY_ASYNC=1 -s NO_EXIT_RUNTIME=1 -s EMTERPRETIFY_BLACKLIST=\"['_lua_getinfo','_lua_rawgetp','_lua_touserdata','_lua_settop','_lua_getstack','_lua_next']\"")
-  set(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS} ${EMTERPRETER_OPT}")
+  set(EMTERPRETER_OPT "--memory-init-file 0 -s TOTAL_MEMORY=67108864 -s ABORTING_MALLOC=0 -s EMTERPRETIFY=1 -s EMTERPRETIFY_ASYNC=1 -s NO_EXIT_RUNTIME=1 -s EMTERPRETIFY_BLACKLIST=\"['_lua_getinfo','_lua_rawgetp','_lua_touserdata','_lua_settop','_lua_getstack','_lua_next']\"")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${EMTERPRETER_OPT}")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${EMTERPRETER_OPT}")
 
   add_definitions(-DLRDB_USE_NODE_CHILD_PROCESS)
@@ -67,7 +66,7 @@ set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR})
 
 
 
-if(NOT LOCAL_LUA_DIRECTORY)
+if(NOT EMSCRIPTEN)
 add_library(lrdb_server SHARED src/debug_server_module.cpp ${HEADER_FILE})
 target_link_libraries(lrdb_server ${LUA_LIBRARIES})
 SET_TARGET_PROPERTIES(lrdb_server PROPERTIES OUTPUT_NAME lrdb_server)
@@ -84,6 +83,8 @@ endif(EMSCRIPTEN)
 
 if(NOT BUILD_NO_TESTS)
 enable_testing()
+
+include (CTest)
 
 if(COVERAGE)
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0 -Wall -Woverloaded-virtual -Wwrite-strings -fprofile-arcs -ftest-coverage -coverage -fno-inline -fno-inline-small-functions -fno-default-inline")

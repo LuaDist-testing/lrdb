@@ -39,7 +39,9 @@ export interface AttachRequestArguments extends DebugProtocol.AttachRequestArgum
 
 export interface DebugServerEvent {
 	method: string;
-	param: any;
+	params: any;
+	param?: any;//
+	error?: any;
 	id: any;
 }
 
@@ -130,8 +132,8 @@ class LRDBTCPClient {
 
 	public send(method: string, param?: any, callback?: (response: any) => void) {
 		let id = this._request_id++;
-
-		var data = JSON.stringify({ "method": method, "param": param, "id": id }) + "\n";
+		//TODO need remove param
+		var data = JSON.stringify({ "jsonrpc": "2.0", "method": method, "params": param, "param": param, "id": id }) + "\n";
 		var ret = this._connection.write(data);
 
 		if (callback) {
@@ -189,7 +191,7 @@ class LRDBChildProcessClient {
 	public send(method: string, param?: any, callback?: (response: any) => void) {
 		let id = this._request_id++;
 
-		var ret = this._child.send({ "method": method, "param": param, "id": id });
+		var ret = this._child.send({ "jsonrpc": "2.0", "method": method, "params": param, "id": id });
 
 		if (callback) {
 			if (ret) {
@@ -203,6 +205,9 @@ class LRDBChildProcessClient {
 		}
 	}
 	public receive(event: DebugServerEvent) {
+		if (event.params == null) {
+			event.params = event.param;
+		}
 		if (this._callback_map[event.id]) {
 			this._callback_map[event.id](event);
 			delete this._callback_map[event.id];
@@ -345,7 +350,6 @@ class LuaDebugSession extends DebugSession {
 		};
 
 		this._debug_client.on_open = () => {
-			this.sendResponse(response);
 			this.sendEvent(new InitializedEvent());
 		};
 
@@ -363,6 +367,7 @@ class LuaDebugSession extends DebugSession {
 			this.sendEvent(new TerminatedEvent());
 		});
 
+		this.sendResponse(response);
 	}
 
 	protected attachRequest(response: DebugProtocol.AttachResponse, args: AttachRequestArguments): void {
@@ -378,19 +383,19 @@ class LuaDebugSession extends DebugSession {
 		};
 
 		this._debug_client.on_open = () => {
-			this.sendResponse(response);
 			this.sendEvent(new InitializedEvent());
 		};
+		this.sendResponse(response);
 	}
 
 
 	protected configurationDoneRequest(response: DebugProtocol.ConfigurationDoneResponse, args: DebugProtocol.ConfigurationDoneArguments): void {
+		this.sendResponse(response);
 		if (this._stopOnEntry) {
 			this.sendEvent(new StoppedEvent("entry", LuaDebugSession.THREAD_ID));
 		} else {
 			this._debug_client.send("continue");
 		}
-		this.sendResponse(response);
 	}
 
 	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
@@ -508,7 +513,7 @@ class LuaDebugSession extends DebugSession {
 			return datapath[0];
 		}
 		else {
-			return datapath[0] + '["' + datapath.slice(1).join('"]["') + '"]';
+			return '(' + datapath[0] + ')[' + datapath.slice(1).join('][') + ']';
 		}
 	}
 
@@ -519,13 +524,27 @@ class LuaDebugSession extends DebugSession {
 		if (id != null) {
 			if (id.datapath.length == 0) {
 				this._debug_client.send(id.msg_name, Object.assign({}, id.msg_param), (res: any) => {
-					this.variablesRequestResponce(response, res.result, id);
+					if (res.error) {
+						response.success = false;
+						response.message = res.error.message;
+						this.sendResponse(response);
+					}
+					else {
+						this.variablesRequestResponce(response, res.result, id);
+					}
 				});
 			}
 			else {
-				let chunk = "return " + this.createVariableObjectPath(id.datapath);
+				let chunk = this.createVariableObjectPath(id.datapath);
 				this._debug_client.send(id.msg_name, Object.assign({ "chunk": chunk }, id.msg_param), (res: any) => {
-					this.variablesRequestResponce(response, res.result[0], id);
+					if (res.error) {
+						response.success = false;
+						response.message = res.error.message;
+						this.sendResponse(response);
+					}
+					else {
+						this.variablesRequestResponce(response, res.result[0], id);
+					}
 				});
 			}
 		}
@@ -539,7 +558,7 @@ class LuaDebugSession extends DebugSession {
 			return "nil";
 		}
 		else if (value == undefined) {
-			return "undefined";
+			return "none";
 		}
 		else {
 			return JSON.stringify(value);
@@ -549,19 +568,41 @@ class LuaDebugSession extends DebugSession {
 	private variablesRequestResponce(response: DebugProtocol.VariablesResponse, variablesData: any, id: VariableReference): void {
 
 		const variables = [];
-		for (var k in variablesData) {
-			const typename = typeof variablesData[k];
-			let varRef = 0;
-			if (typename == "object") {
-				varRef = this._variableHandles.create(new VariableReference("eval", id.msg_param, id.datapath.concat([k])));
+		if (variablesData instanceof Array) {
+			for (let i = 0; i < variablesData.length; ++i) {
+				const typename = typeof variablesData[i];
+				let k = (i + 1).toString()
+				let varRef = 0;
+				if (typename == "object") {
+					varRef = this._variableHandles.create(new VariableReference("eval", id.msg_param, id.datapath.concat([k])));
+				}
+				variables.push({
+					name: k,
+					type: typename,
+					value: this.stringify(variablesData[i]),
+					variablesReference: varRef
+				});
 			}
-			variables.push({
-				name: k,
-				type: typename,
-				value: this.stringify(variablesData[k]),
-				variablesReference: varRef
-			});
 
+		}
+		else {
+			for (var k in variablesData) {
+				const typename = typeof variablesData[k];
+				let varRef = 0;
+				if (typename == "object") {
+					let datakey = k;
+					if (id.datapath.length) {
+						datakey = '"' + k + '"'
+					}
+					varRef = this._variableHandles.create(new VariableReference("eval", id.msg_param, id.datapath.concat([datakey])));
+				}
+				variables.push({
+					name: k,
+					type: typename,
+					value: this.stringify(variablesData[k]),
+					variablesReference: varRef
+				});
+			}
 		}
 		response.body = {
 			variables: variables
@@ -624,22 +665,8 @@ class LuaDebugSession extends DebugSession {
 			return;
 		}
 		//		if (args.context == "watch" || args.context == "hover" || args.context == "repl") {
-		let expression_name = args.expression.trim()
-		let chunk = "";
-		if (args.context == "repl") {
-			chunk = args.expression
-			if(expression_name.startsWith("return"))
-			{
-				expression_name = expression_name.substr("return".length)
-			}
-		}
-		else {
-			chunk = args.expression.trim();
-			if (!chunk.startsWith("return")) {
-				chunk = "return " + args.expression
-			}
-		}
-		this._debug_client.send("eval", { "stack_no": args.frameId, "chunk": chunk,"depth":0 }, (res: any) => {
+		let chunk = args.expression;
+		this._debug_client.send("eval", { "stack_no": args.frameId, "chunk": chunk, "depth": 0 }, (res: any) => {
 			if (res.result) {
 				let ret = ""
 				for (let r of res.result) {
@@ -652,7 +679,7 @@ class LuaDebugSession extends DebugSession {
 					let refobj = res.result[0];
 					const typename = typeof refobj;
 					if (refobj && typename == "object") {
-						varRef = this._variableHandles.create(new VariableReference("eval", { "stack_no": args.frameId }, [expression_name]));
+						varRef = this._variableHandles.create(new VariableReference("eval", { "stack_no": args.frameId }, [chunk]));
 					}
 				}
 				response.body = {
@@ -682,10 +709,11 @@ class LuaDebugSession extends DebugSession {
 	}
 
 	private handleServerEvents(event: DebugServerEvent) {
-		if (event.method == "paused" && event.param.reason != "entry") {
-			this.sendEvent(new StoppedEvent(event.param.reason, LuaDebugSession.THREAD_ID));
+		if (event.method == "paused" && event.params.reason != "entry") {
+			this.sendEvent(new StoppedEvent(event.params.reason, LuaDebugSession.THREAD_ID));
 		}
 		else if (event.method == "running") {
+			this._variableHandles.reset();
 			this.sendEvent(new ContinuedEvent(LuaDebugSession.THREAD_ID));
 		}
 		else if (event.method == "exit") {

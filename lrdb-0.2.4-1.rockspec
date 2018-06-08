@@ -1,23 +1,22 @@
 -- This file was automatically generated for the LuaDist project.
 
 package = "lrdb"
-version = "0.2.0-1"
+version = "0.2.4-1"
 -- LuaDist source
 source = {
-  tag = "0.2.0-1",
+  tag = "0.2.4-1",
   url = "git://github.com/LuaDist-testing/lrdb.git"
 }
 -- Original source
 -- source = {
---    url = "git://github.com/satoren/LRDB/",
---    tag = "v0.2.0",
+--    url = "git+https://github.com/satoren/LRDB",
+--    tag = "v0.2.4"
 -- }
 description = {
-    summary = "Remote Debugger with VSCode Extension",
+    summary = "Remote Debugger for Lua",
     detailed = [[
         Remote debugger for Lua with Visual Studio Code extension.
         https://marketplace.visualstudio.com/items?itemName=satoren.lrdb
-        Require CMake,C++11 compiler
    ]],
    homepage = "https://github.com/satoren/LRDB",
    license = "Boost"

@@ -8,7 +8,7 @@ This extension is debug Lua programs with Visual Studio Code.
 
 ## Features
 
-
+* Supports Windows,macOS,Linux
 * Add/remove break points
 * Conditional break points
 * Continue,Pause,Step over, Step in, Step out
@@ -18,6 +18,7 @@ This extension is debug Lua programs with Visual Studio Code.
 * Debug with embedded Lua interpreter(Lua 5.3.3 on Javascript by Emscripten)
 * Debug with Your host program([require embed debug server](https://github.com/satoren/LRDB))
 * Remote debugging over TCP
+
 
 
 ## Extension Settings
@@ -41,25 +42,23 @@ launch.json example:
 
 ## Release Notes
 
+### 0.2.3
+- Change protocol of remote debug to jsonrpc
+
+### 0.2.2
+- LRDB Server bug fix.
+- Improve evaluate on debug console
+
+### 0.2.1
+- Bug fixes.
+
 ### 0.2.0
 - Change LuaVM native code to javascript by Emscripten
+
 ### 0.1.9
 - Bug fixes.
 - Added support sourceRequest. It mean can step execute on string chunk.
+
 ### 0.1.8
 - Bug fixes.
 - Update Lua 5.3.3 to 5.3.4
-
-### 0.1.6
-- ``null`` to ``nil`` at watch and variable view
-
-### 0.1.4
-- Remove ${command.CurrentSource}. It is same to ${file}
-- Support operators in hit count condition breakpoint ``<``, ``<=``, ``==``, ``>``, ``>=``, ``%``
-
-
-### 0.1.3
-- Bug fixes.
-
-### 0.1.0
-- Initial release.

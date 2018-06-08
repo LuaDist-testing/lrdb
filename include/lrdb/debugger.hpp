@@ -210,6 +210,9 @@ class debug_info {
     if (got_type) {
       got_debug_.append(got_type);
     }
+    if (debug->event == LUA_HOOKLINE) {
+      got_debug_.append("l");
+    }
   }
   bool is_available_info(const char* type) const {
     return got_debug_.find(type) != std::string::npos;
@@ -337,8 +340,29 @@ class debug_info {
   std::vector<json::value> eval(const char* script, bool global = true,
                                 bool upvalue = true, bool local = true,
                                 int object_depth = 1) {
+    std::string error;
+    std::vector<json::value> ret =
+        eval(script, error, global, upvalue, local, object_depth);
+    if (!error.empty()) {
+      ret.push_back(json::value(error));
+    }
+    return ret;
+  }
+
+  std::vector<json::value> eval(const char* script, std::string& error,
+                                bool global = true, bool upvalue = true,
+                                bool local = true, int object_depth = 1) {
     int stack_start = lua_gettop(state_);
-    luaL_loadstring(state_, script);
+    int loadstat =
+        luaL_loadstring(state_, (std::string("return ") + script).c_str());
+    if (loadstat != 0) {
+      lua_pop(state_, 1);
+      loadstat = luaL_loadstring(state_, script);
+    }
+    if (!lua_isfunction(state_, -1)) {
+      error = lua_tostring(state_, -1);
+      return std::vector<json::value>();
+    }
 
     create_eval_env(global, upvalue, local);
 #if LUA_VERSION_NUM >= 502
@@ -346,7 +370,11 @@ class debug_info {
 #else
     lua_setfenv(state_, -2);
 #endif
-    lua_pcall(state_, 0, LUA_MULTRET, 0);
+    int call_stat = lua_pcall(state_, 0, LUA_MULTRET, 0);
+    if (call_stat != 0) {
+      error = lua_tostring(state_, -1);
+      return std::vector<json::value>();
+    }
     std::vector<json::value> ret;
     int ret_end = lua_gettop(state_);
     for (int retindex = stack_start + 1; retindex <= ret_end; ++retindex) {
@@ -417,6 +445,7 @@ class debug_info {
     while (const char* varname = lua_getupvalue(state_, -1, upvno++)) {
       localvars.push_back(std::pair<std::string, json::value>(
           varname, utility::to_json(state_, -1, object_depth)));
+	  lua_pop(state_, 1);
     }
     lua_pop(state_, 1);  // pop current running function
     return localvars;
@@ -531,6 +560,7 @@ class debug_info {
 class stack_info : private debug_info {
  public:
   stack_info(lua_State* L, int level) {
+    memset(&debug_var_, 0, sizeof(debug_var_));
     valid_ = lua_getstack(L, level, &debug_var_) != 0;
     if (valid_) {
       assign(L, &debug_var_);
@@ -766,6 +796,26 @@ class debugger {
   debugger(const debugger&);             //=delete;
   debugger& operator=(const debugger&);  //=delete;
 
+  static bool is_file_path_match(const char* path1, const char* path2) {
+    // TODO need more inteligent?
+    int i = 0;
+    while (true) {
+      char c1 = path1[i];
+      char c2 = path2[i];
+
+      if (c1 != c2) {
+        // allow different backslash and slash for windows
+        if (((c1 != '\\' || c2 != '/') && (c1 != '/' || c2 != '\\'))) {
+          return false;
+        }
+      }
+      if (c1 == '\0') {
+        return true;
+      }
+      i++;
+    }
+  }
+
   breakpoint_info* search_breakpoints(debug_info& debuginfo) {
     if (line_breakpoints_.empty()) {
       return 0;
@@ -782,7 +832,7 @@ class debugger {
         if (source[0] == '@') {
           source++;
         }
-        if (it->file == source) {
+        if (is_file_path_match(it->file.c_str(), source)) {
           return &(*it);
         }
       }
@@ -793,7 +843,7 @@ class debugger {
                        debug_info& debuginfo) {
     if (!breakpoint.condition.empty()) {
       json::array condret =
-          debuginfo.eval(("return " + breakpoint.condition).c_str());
+          debuginfo.eval(breakpoint.condition.c_str());
       return !condret.empty() && condret[0].evaluate_as_boolean();
     }
     return true;
@@ -812,7 +862,7 @@ class debugger {
                            debug_info& debuginfo) {
     if (!breakpoint.hit_condition.empty()) {
       json::array condret =
-          debuginfo.eval(("return " + std::to_string(breakpoint.hit_count) +
+          debuginfo.eval((std::to_string(breakpoint.hit_count) +
                           breakpoint.hit_condition)
                              .c_str());
 
