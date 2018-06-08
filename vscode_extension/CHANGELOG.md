@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [0.1.8] - 2017-02-01
+### Changed
+- update Lua 5.3.3 to 5.3.4
+### Fixed
+- fix stepOver and pause did not work.
+
 ## [0.1.7] - 2017-01-27
 ### Fixed
 - program arg is not available at Lua
